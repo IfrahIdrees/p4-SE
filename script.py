@@ -8,6 +8,7 @@ commands=[]
 file = open("commands.txt")
 for eachline in file.readlines():
 	commands.append(eachline.strip('\n').split(' '))
+megacount=0;	
 
 DFS_stack=[]
 class Tree(object):
@@ -20,6 +21,7 @@ class Tree(object):
         self.changedfields=None;
         self.fun_name=None;
         self.args=None;
+        self.parent=None;
 
 def printStats(root):
 	paths=list(dfsallpaths(root,"_drop"))
@@ -32,7 +34,7 @@ def printStats(root):
 		for nodes in condition:
 			# print nodes
 			if(not(nodes == "" or nodes == None)):
-				allcondition+="^(" + nodes +")"
+				allcondition+=" ^ (" + nodes +" ) "
 		conditions[i]=allcondition[1:]
 
 
@@ -118,7 +120,6 @@ def inorder(root):
 		inorder(root.right)
 
 def search(paser_states,node):
-
 	for i, state in enumerate(parser_states, start=0):
 		if(state["name"]  == node.name):
 			if not state["transition_key"]:
@@ -134,7 +135,7 @@ def search(paser_states,node):
 					cond+=i+"."
 				cond+="=="+str(state["transitions"][0]["value"]);
 				node.condition=cond
-				return Tree(None, None,next_state,cond)
+				return Tree(None, None,next_state,None)
 			break;				
 
 
@@ -145,9 +146,9 @@ def formulate_parser_tree(liststate, node):
 		right=search(liststate,node)
 		node.right=right;
 
-		if(right is not None):
+		if(node is not None):
 			for i, state in enumerate(parser_states, start=0):
-				if(state["name"]  == right.name):
+				if(state["name"]  == node.name):
 					del liststate[i]
 
 		return formulate_parser_tree(liststate,right)
@@ -158,24 +159,54 @@ def formulate_exp(dic):
 			return " ";
 	except KeyError:
 		pass;
-
+# 
+	if(dic["type"] == "field"):
+		cond=""
+		for i in dic["value"]:
+			cond+=i+"."
+		return cond	
 	if(dic["type"] != "expression"):
-		return dic["value"]
+		return dic["value"]	
 	else:
 		return str(formulate_exp(dic["value"]["left"]))+str(dic["value"]["op"])+str(formulate_exp(dic["value"]["right"]))
 
 
 def search_next_control_node(ingress_tables,node):
+	arg_list=[]
 	for i, table in enumerate(ingress_tables, start=0):
 		if (table["name"] == node.name):
-			condition=""
-			for j in table["key"][0]["target"]:
-				condition+=j+"."
-
+			
+			count=0;	
+			commandlist=[]	
 			for j in commands:
 				if(j[1] == node.name and j[0] == 'table_add'):
-					condition+="=="+j[3]
-					arg_list=commands[5:]
+					count+=1;
+					commandlist.append(j);
+			if(count == 1):
+				# print "1 length" + node.name
+				condition=""
+				for j in table["key"][0]["target"]:
+					condition+=j+"."
+							
+				for j in commandlist:
+					if(j[1] == node.name and j[0] == 'table_add'):
+						condition+="=="+j[3]
+						arg_list.append(j[5:])		
+			else:
+				
+				condition=""
+				for j in table["key"][0]["target"]:
+					condition+=j+"."
+
+				for i, command in enumerate(commandlist, start=0):
+					if(command[1] == node.name and command[0] == 'table_add'):
+						condition+="=="+command[3] + " v "
+						for command in table["key"][0]["target"]:
+							condition+=command+"."
+						arg_list.append(command[5:])	
+
+
+			# pprint(arg_list)			
 			true_state  = table["actions"][1]
 			false_state = table["actions"][0]
 			node.condition=condition
@@ -185,38 +216,65 @@ def search_next_control_node(ingress_tables,node):
 			node.left=left
 			right.action=True
 			left.action=True;
+			right.parent=node;
+			left.parent=node;
 			fill_action_states(right,arg_list)
 			return node,node.right,node.left
 
 def fill_action_states(node,arg_list):
 	fun_name=[]
 	for i in data['actions']:
+		# pprint (i)
 		if( i["name"] == node.name):
+			for index, a in enumerate(arg_list, start=0):
+					key="key"+str(index)
+					i['runtime_data'].append({key:a})
 			for j in range(len(i['runtime_data'])):
-				i[j]=arg_list[j]
 				for k in i["primitives"]:
 					fun_name.append(k)
+			# pprint(i['runtime_data'])
 			node.fun_name=fun_name;
 			node.args=arg_list
 
 def formulate_control_graph(ingress_tables,node,stringname):
-	if not ingress_tables or node is None:
+	# if not ingress_tables or node is None:
+	# global megacount;
+	if node is None:
 		return
 	else:
+		# print node.name
 		if(node.action):
+			# pprint (ingress_tables);
 			for i, table in enumerate(ingress_tables, start=0):
-				if node.name in table["actions"]:
+				if node.name in table["actions"] and node.parent.name == table["name"]:
+					# print(table["next_tables"]),node.name
 					next_true_state=table["next_tables"][node.name]
-					right=Tree(None,None,next_true_state,None);
+					# print "hereeeNTS", next_true_state, type(next_true_state)
+					
+					if(str(next_true_state)  == "None"):
+						# print "hereeNOne"
+						right=None;
+					else:
+						# print "hereenotnone"	
+						right=Tree(None,None,next_true_state,None);
 					node.right=right;
-					left=None;		
-					del ingress_tables[i]
+					
+					left=None;
+					# if(right is not None):
+					# 	print "right action",node.name, right.name		
+					# del ingress_tables[i]
 					break;
 		else:
 			node,right,left=search_next_control_node(ingress_tables,node)
+		# if(right is not None):
+		# 	print "right",node.name, right.name
+		# if(left is not None):
+		# 	print "left",node.name, left.name	
+		# pprint(ingress_tables)	
 		formulate_control_graph(ingress_tables,right,"right");
+		# print "heree"
 		formulate_control_graph(ingress_tables,left,"left");
-
+		return;
 		
 
 
@@ -251,10 +309,13 @@ print("---------------Parser-------------")
 inorder(root);	
 
 ParserNodesList=DFS(root);
-print ParserNodesList;
+# print ParserNodesList;
+
+# for i in ParserNodesList:
+# 	print i.name;
 
 
-
+#ingress
 control = data["pipelines"]
 ingress=control[0]
 
@@ -269,8 +330,8 @@ for key in ingress:
 		listObjects=ingress[key]
 		for j in listObjects:
 			if(j["name"] == init_table):
-				
 				condition=formulate_exp(j["expression"])
+				# print "heree",condition		
 true_state=ingress["conditionals"][0]["true_next"]
 false_state=ingress["conditionals"][0]["false_next"]
 
@@ -286,13 +347,16 @@ control_conditional.right=conditional_true_state
 control_conditional.left=conditional_false_state			
 
 conditional_true_state,right,left=search_next_control_node(ingress_tables,conditional_true_state)
+# pprint(ingress_tables)
 formulate_control_graph(ingress_tables,control_conditional.right,"rootright");
 
 print("---------------Ingress-------------")
 inorder(control_conditional);
 
 
-ParserNodesList[-1].right=control_root;
+for i in reversed(ParserNodesList):
+	if(i is not None):
+		i.right=control_root;
 
 
 
@@ -323,8 +387,8 @@ if(len(egress["conditionals"]) and egress["conditionals"][0]["name"]  == init_eg
 	control_conditional.right=conditional_true_state
 	control_conditional.left=conditional_false_state			
 
-	conditional_true_state,right,left=search_next_control_node(ingress_tables,conditional_true_state)
-	formulate_control_graph(ingress_tables,control_conditional.right,"rootrifgt");
+	conditional_true_state,right,left=search_next_control_node(egress_tables,conditional_true_state)
+	formulate_control_graph(egress_tables,control_conditional.right,"rootrifgt");
 
 else:
 	for i, state in enumerate(egress_tables, start=0):
